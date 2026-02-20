@@ -93,9 +93,9 @@ with tab1:
             axial_slice = normalize_slice(np.rot90(vol_data[:, :, z_idx]), vmin, vmax)
             
             # Render images (CSS will keep them crisp)
-            c1.image(sagittal_slice, caption=f"Sagittal (X={x_idx})", use_container_width=True)
-            c2.image(coronal_slice, caption=f"Coronal (Y={y_idx})", use_container_width=True)
-            c3.image(axial_slice, caption=f"Axial (Z={z_idx})", use_container_width=True)
+            c1.image(sagittal_slice, caption=f"Sagittal (X={x_idx})", width='stretch')
+            c2.image(coronal_slice, caption=f"Coronal (Y={y_idx})", width='stretch')
+            c3.image(axial_slice, caption=f"Axial (Z={z_idx})", width='stretch')
 
 
 # ==========================================
@@ -190,7 +190,7 @@ with tab2:
                     height=700
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
         except Exception as e:
             st.error(f"An error occurred while processing the file: {e}")
