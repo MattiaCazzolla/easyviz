@@ -1,5 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
+import plotly.colors as pc  # Added for explicit colormap sampling
 from plotly.subplots import make_subplots
 import nibabel as nib
 import numpy as np
@@ -187,8 +188,8 @@ elif "GIFTI" in view_mode:
     
     if mesh_file is not None:
         active_texture_file = None
-        intensity_values = None
         raw_intensity = None
+        vertex_colors = None
         
         if texture_files:
             st.sidebar.subheader("Texture Controls")
@@ -212,13 +213,14 @@ elif "GIFTI" in view_mode:
                 m2.metric("Faces", f"{len(i):,}")
                 st.divider()
 
-                # Calculate intensity and apply masking threshold
+                # Calculate intensity and apply explicit vertex coloring
                 if active_texture_file:
                     raw_intensity = load_gifti_texture(active_texture_file.getvalue())
                     
                     if len(raw_intensity) != len(x):
                         st.error(f"Mismatch: Mesh has {len(x)} vertices, but selected texture has {len(raw_intensity)} values.")
                         raw_intensity = None
+                        active_texture_file = None
                     else:
                         # Masking Slider Configuration
                         min_tex, max_tex = float(np.min(raw_intensity)), float(np.max(raw_intensity))
@@ -232,12 +234,19 @@ elif "GIFTI" in view_mode:
                             step=(max_tex - min_tex) / 100.0
                         )
                         
-                        # Apply mask: Set values outside threshold to NaN so they aren't colored
-                        intensity_values = np.where(
-                            (raw_intensity >= thresh_min) & (raw_intensity <= thresh_max), 
-                            raw_intensity, 
-                            np.nan
+                        # Normalize values between 0.0 and 1.0 based on thresholds
+                        norm_intensity = np.clip(
+                            (raw_intensity - thresh_min) / (thresh_max - thresh_min + 1e-9), 
+                            0.0, 1.0
                         )
+                        
+                        # Get the RGB color for every vertex
+                        vertex_colors = np.array(pc.sample_colorscale(colormap, norm_intensity))
+                        
+                        # Strict Thresholding: Mask values strictly outside the range to the mesh color
+                        base_mesh_color = '#cbd5e1'
+                        mask_outside_range = (raw_intensity < thresh_min) | (raw_intensity > thresh_max)
+                        vertex_colors[mask_outside_range] = base_mesh_color
 
                 # Dictionary of standard camera views
                 camera_views = {
@@ -250,7 +259,7 @@ elif "GIFTI" in view_mode:
                     "Posterior": dict(eye=dict(x=0, y=-1.5, z=0), center=dict(x=0, y=0, z=0), up=dict(x=0, y=0, z=1))
                 }
 
-                # Construct Plotly built-in buttons (Client-side fast rendering)
+                # Construct Plotly built-in buttons
                 plotly_buttons = []
                 for view_name, cam in camera_views.items():
                     plotly_buttons.append(
@@ -264,7 +273,7 @@ elif "GIFTI" in view_mode:
                 # Lighting Setup
                 lighting_effects_without_texture = dict(ambient=0.15, diffuse=1.0, specular=0.5, roughness=0.4, fresnel=0.2)
                 lighting_effects_with_texture = dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0)
-                current_lighting = lighting_effects_with_texture if intensity_values is not None else lighting_effects_without_texture
+                current_lighting = lighting_effects_with_texture if active_texture_file else lighting_effects_without_texture
                 lightposition = dict(x=100, y=100, z=100)
                 
                 # Build Base Mesh Arguments
@@ -275,30 +284,51 @@ elif "GIFTI" in view_mode:
                     flatshading=False,
                     lighting=current_lighting,
                     lightposition=lightposition,
-                    name="Cortical Surface",
-                    color='#cbd5e1' # Professional silver base color
+                    name="Cortical Surface"
                 )
 
-                if intensity_values is not None:
-                    mesh_args['intensity'] = intensity_values
-                    mesh_args['colorscale'] = colormap
-                    mesh_args['showscale'] = True
-                    mesh_args['colorbar'] = dict(title="Intensity", thickness=15, len=0.6, xpad=30)
+                dummy_colorbar = None
+
+                if active_texture_file:
+                    mesh_args['vertexcolor'] = vertex_colors
                     mesh_args['text'] = raw_intensity
                     mesh_args['hovertemplate'] = "<b>Value:</b> %{text:.4f}<extra></extra>"
+                    
+                    # Create invisible trace for the colorbar
+                    dummy_colorbar = go.Scatter3d(
+                        x=[x[0]], y=[y[0]], z=[z[0]], 
+                        mode='markers',
+                        marker=dict(
+                            size=0.001,
+                            color=[thresh_min, thresh_max], 
+                            colorscale=colormap,
+                            cmin=thresh_min,
+                            cmax=thresh_max,
+                            showscale=True,
+                            colorbar=dict(title="Intensity", thickness=15, len=0.6, xpad=30)
+                        ),
+                        hoverinfo='none',
+                        showlegend=False
+                    )
                 else:
+                    mesh_args['color'] = '#cbd5e1'
                     mesh_args['hovertemplate'] = "<b>X:</b> %{x:.2f}<br><b>Y:</b> %{y:.2f}<br><b>Z:</b> %{z:.2f}<extra></extra>"
 
                 # Render Main Interactive Plot
                 st.markdown("**Interactive View:**")
-                fig = go.Figure(data=[go.Mesh3d(**mesh_args)])
+                
+                plot_data = [go.Mesh3d(**mesh_args)]
+                if dummy_colorbar is not None:
+                    plot_data.append(dummy_colorbar)
+                    
+                fig = go.Figure(data=plot_data)
                 
                 fig.update_layout(
                     scene=dict(
                         xaxis=dict(visible=False), yaxis=dict(visible=False),
                         zaxis=dict(visible=False), camera=camera_views["Isometric"], aspectmode='data'          
                     ),
-                    margin=dict(l=0, r=0, b=0, t=50),  # Increased top margin to fit buttons
+                    margin=dict(l=0, r=0, b=0, t=50),
                     height=700,
                     plot_bgcolor='rgba(0,0,0,0)',
                     paper_bgcolor='rgba(0,0,0,0)',
@@ -324,8 +354,6 @@ elif "GIFTI" in view_mode:
                 st.markdown("**Interactive 3D HTML**")
                 st.caption("Download the 3D isometric model as an interactive webpage to share with colleagues.")
                 
-                # Generate HTML string from the main figure
-                # include_plotlyjs="cdn" keeps the file size small by loading the JS library from the web
                 html_string = fig.to_html(include_plotlyjs="cdn", full_html=True)
                 
                 st.download_button(
@@ -337,9 +365,8 @@ elif "GIFTI" in view_mode:
                 
                 st.divider()
                 
-                # 2. Static Multi-view Export (Your existing code)
+                # 2. Static Multi-view Export
                 st.markdown("**📸 Static Multi-view Figure**")
-                # Allow user to select which views to include in the publication figure
                 default_views = ["Lateral (Right)", "Superior", "Anterior", "Lateral (Left)", "Inferior", "Posterior"]
                 selected_views = st.multiselect(
                     "Select views to include in the figure:",
@@ -355,7 +382,6 @@ elif "GIFTI" in view_mode:
                     else:
                         with st.spinner("Rendering multi-view figure (this may take a moment)..."):
                             
-                            # Dynamically calculate grid layout based on selection
                             if n_views == 4:
                                 cols = 2
                                 rows = 2
@@ -363,7 +389,6 @@ elif "GIFTI" in view_mode:
                                 cols = min(3, n_views)
                                 rows = math.ceil(n_views / cols)
 
-                            # Build the dynamic grid specs
                             specs = [[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)]
                                       
                             fig_pub = make_subplots(
@@ -379,13 +404,12 @@ elif "GIFTI" in view_mode:
                             for idx, view_name in enumerate(selected_views):
                                 r = (idx // cols) + 1
                                 c = (idx % cols) + 1
-                                
-                                # Hide colorbar on all but the last plot to prevent overlap
-                                current_args = mesh_args.copy()
-                                if idx < n_views - 1 and 'showscale' in current_args:
-                                    current_args['showscale'] = False
                                     
-                                fig_pub.add_trace(go.Mesh3d(**current_args), row=r, col=c)
+                                fig_pub.add_trace(go.Mesh3d(**mesh_args), row=r, col=c)
+                                
+                                # Add the colorbar trace ONLY to the first subplot
+                                if idx == 0 and dummy_colorbar is not None:
+                                    fig_pub.add_trace(dummy_colorbar, row=r, col=c)
                                 
                                 # Setup scene layout for this specific subplot
                                 scene_name = f'scene{idx+1}' if idx > 0 else 'scene'
@@ -397,10 +421,9 @@ elif "GIFTI" in view_mode:
                                     aspectmode='data'
                                 )
 
-                            # Apply layout updates and adjust height dynamically
                             fig_pub.update_layout(
                                 **scene_layouts,
-                                height=400 * rows,  # Scale height by number of rows
+                                height=400 * rows,
                                 margin=dict(l=10, r=10, b=10, t=30),
                                 plot_bgcolor='rgba(0,0,0,0)',
                                 paper_bgcolor='rgba(0,0,0,0)'
@@ -410,7 +433,7 @@ elif "GIFTI" in view_mode:
                                 'toImageButtonOptions': {
                                     'format': 'png', 
                                     'filename': 'neuro_mesh_multiview',
-                                    'height': 600 * rows, # Higher resolution based on rows
+                                    'height': 600 * rows,
                                     'width': 1800,
                                     'scale': 2
                                 }
