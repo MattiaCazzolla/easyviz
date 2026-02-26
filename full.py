@@ -250,15 +250,17 @@ elif "GIFTI" in view_mode:
                     "Posterior": dict(eye=dict(x=0, y=-1.5, z=0), center=dict(x=0, y=0, z=0), up=dict(x=0, y=0, z=1))
                 }
 
-                # Interactive Viewer Camera Controls
-                st.markdown("**Interactive View:**")
-                view_angle = st.radio(
-                    "Quick Views", 
-                    list(camera_views.keys()), 
-                    horizontal=True,
-                    label_visibility="collapsed"
-                )
-                
+                # Construct Plotly built-in buttons (Client-side fast rendering)
+                plotly_buttons = []
+                for view_name, cam in camera_views.items():
+                    plotly_buttons.append(
+                        dict(
+                            label=view_name,
+                            method="relayout",
+                            args=[{"scene.camera": cam}]
+                        )
+                    )
+
                 # Lighting Setup
                 lighting_effects_without_texture = dict(ambient=0.15, diffuse=1.0, specular=0.5, roughness=0.4, fresnel=0.2)
                 lighting_effects_with_texture = dict(ambient=1.0, diffuse=0.0, specular=0.0, roughness=1.0, fresnel=0.0)
@@ -288,24 +290,55 @@ elif "GIFTI" in view_mode:
                     mesh_args['hovertemplate'] = "<b>X:</b> %{x:.2f}<br><b>Y:</b> %{y:.2f}<br><b>Z:</b> %{z:.2f}<extra></extra>"
 
                 # Render Main Interactive Plot
+                st.markdown("**Interactive View:**")
                 fig = go.Figure(data=[go.Mesh3d(**mesh_args)])
+                
                 fig.update_layout(
                     scene=dict(
                         xaxis=dict(visible=False), yaxis=dict(visible=False),
-                        zaxis=dict(visible=False), camera=camera_views[view_angle], aspectmode='data'          
+                        zaxis=dict(visible=False), camera=camera_views["Isometric"], aspectmode='data'          
                     ),
-                    margin=dict(l=0, r=0, b=0, t=0),
+                    margin=dict(l=0, r=0, b=0, t=50),  # Increased top margin to fit buttons
                     height=700,
                     plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)'
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    updatemenus=[dict(
+                        type="buttons",
+                        direction="right",
+                        x=0.5,
+                        y=1.05,
+                        xanchor="center",
+                        yanchor="bottom",
+                        showactive=True,
+                        buttons=plotly_buttons
+                    )]
                 )
 
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-                # --- PUBLICATION FIGURE GENERATOR ---
+                # --- PUBLICATION FIGURE & HTML GENERATOR ---
                 st.divider()
-                st.markdown("### 📸 Export Options")
+                st.markdown("### 💾 Export Options")
                 
+                # 1. HTML Interactive Export
+                st.markdown("**Interactive 3D HTML**")
+                st.caption("Download the 3D isometric model as an interactive webpage to share with colleagues.")
+                
+                # Generate HTML string from the main figure
+                # include_plotlyjs="cdn" keeps the file size small by loading the JS library from the web
+                html_string = fig.to_html(include_plotlyjs="cdn", full_html=True)
+                
+                st.download_button(
+                    label="📥 Download Interactive HTML",
+                    data=html_string,
+                    file_name="neuro_mesh_isometric.html",
+                    mime="text/html"
+                )
+                
+                st.divider()
+                
+                # 2. Static Multi-view Export (Your existing code)
+                st.markdown("**📸 Static Multi-view Figure**")
                 # Allow user to select which views to include in the publication figure
                 default_views = ["Lateral (Right)", "Superior", "Anterior", "Lateral (Left)", "Inferior", "Posterior"]
                 selected_views = st.multiselect(
